@@ -6,12 +6,16 @@ const Utils                       = require('../common/Utils');
 const redis                       = require('redis');
 
 const bnbABI                      = require('../../config/abi/bnb');
+const memoryABI                   = require('../../config/abi/propose');
+const proposeABI                  = require('../../config/abi/memory');
 const network                     = require('../../config/network');
 
 const web3                        = Utils.getWeb3Instance();
 const client                      = redis.createClient();
 const importMulti                 = client.multi();
 const bnbContract                 = new web3.eth.Contract(bnbABI, network.contractAddresses.bnb);
+const proposeContract             = new web3.eth.Contract(proposeABI, network.contractAddresses.propose);
+const memoryContract              = new web3.eth.Contract(memoryABI, network.contractAddresses.memory);
 
 let LATEST_PROCESSED_BLOCK  = 0;
 // const env                   = process.env;
@@ -68,7 +72,7 @@ class SyncChainToRedis {
 
   //Get lates block number form redis
   getLatestBlockNumber(next) {
-   return next(null,6000000);
+   return next(null,process.env.START_BLOCKNUMBER);
   }
 
   //
@@ -124,76 +128,138 @@ class SyncChainToRedis {
     console.log(`_processBlocksOnce: ${fromBlockNumber} → ${toBlockNumber}`);
     async.auto({
       logs: (next) => {
-        start0 = Date.now();
-        bnbContract.getPastEvents("Transfer", {
-          //filter: {myIndexedParam: [20,23], myOtherIndexedParam: '0x123456789...'}, // Using an array means OR: e.g. 20 or 23
-          fromBlock: fromBlockNumber,
-          toBlock: toBlockNumber
-        }, (err, events) => {
-          if (err) {
-            return next(`Cannot query data from network: ${err.toString()}`);
-          }
-          millis0 = Date.now() - start0;
-          console.log("logs:= ",events.length);
-          console.log("  Time getLogs: ",millis0/1000);
-          countLogs  = events.length;
-          return next(null, events);
-        })
-        .then(function(events){
-            //console.log(events) // same results as the optional callback above
-        });
+        this.getTransfer(fromBlockNumber, toBlockNumber, next);
       },
+      // proprose: (next) => {
+      //   this.getProprose(fromBlockNumber, toBlockNumber, next);
+      // },
+      // memory: (next) => {
+      //   this.getMemory(fromBlockNumber, toBlockNumber, next);
+      // },
       blockTimestamps: ['logs', (ret, next) => {
-        start1 = Date.now();
-        const blockNumbers = _.map(ret.logs, 'blockNumber');
-        const blockTimestamps = {};
-
-        async.each(blockNumbers, (blockNumber, _next) => {
-          // console.log(blockNumber);
-          // this.getBlockTimestamp(blockNumber, (_err, timestamp) => {
-          //   if (_err) {
-          //     console.log(_err);
-          //   }
-
-          //   blockTimestamps[blockNumber] = timestamp;
-          //   _next(null, null);
-          // });
-
-          web3.eth.getBlock(blockNumber, (_err, block) => {
-            if (_err) {
-              return _next(_err);
-            }
-            blockTimestamps[blockNumber] = block.timestamp;
-            _next(null, null);
-          });
-        }, (_err) => {
-          if (_err) {
-            return next(_err);
-          }
-          millis1 = Date.now() - start1;
-          console.log("  Time blockTimestamps: ",millis1/1000);
-          return next(null, blockTimestamps);
-        });
-        // return next(null, "blockTimestamps");
+        this.getBlockTimestamp(ret,next);
       }],
-      processData: ['blockTimestamps', (ret, next) => {
+      processLogs: ['blockTimestamps', (ret, next) => {
         this._processLogData(ret.logs, ret.blockTimestamps, next);
       }],
-      savedata:[ 'processData', (ret, next) =>{
-        this._saveToRds(ret.processData, next);
+      // processProprose: ['blockTimestamps', 'proprose', (ret, next) => {
+      //   this._processProposeData(ret.proprose, ret.blockTimestamps, next);
+      // }],
+      // processMemory: ['blockTimestamps', 'memory', (ret, next) => {
+      //   this._processMemoryData(ret.memory, ret.blockTimestamps, next);
+      // }],
+      // savedata:[ 'processLogs','processProprose','processMemory', (ret, next) =>{
+      //   this._saveToRds(ret.processData, next);
+      // }],
+      savedata:[ 'processLogs', (ret, next) =>{
+        this._saveToRds(ret.processLogs, next);
       }]
     }, callback);
   }
-  //
-  getBlockTimestamp (blockNumber, callback) {
-    web3.eth.getBlock(blockNumber, (err, block) => {
-    if (err) {
-      return callback(err);
-    }
-
-    // logger.trace(`Requeried! Block ${blockNumber} time: ${block.timestamp}`);
-      return callback(null, block.timestamp);
+  //for test bnb
+  getTransfer(fromBlockNumber, toBlockNumber, callback) {
+    start0 = Date.now();
+    bnbContract.getPastEvents("Transfer", {
+      //filter: {myIndexedParam: [20,23], myOtherIndexedParam: '0x123456789...'}, // Using an array means OR: e.g. 20 or 23
+      fromBlock: fromBlockNumber,
+      toBlock: toBlockNumber
+    }, (err, events) => {
+      if (err) {
+        return callback(`Cannot query data from network: ${err.toString()}`);
+      }
+      millis0 = Date.now() - start0;
+      console.log("logs:= ",events.length);
+      console.log("  Time getLogs: ",millis0/1000);
+      countLogs  = events.length;
+      return callback(null, events);
+    })
+    .then(function(events){
+        //console.log(events) // same results as the optional callback above
     });
+  }
+  //for locklove
+  getProprose(fromBlockNumber, toBlockNumber, callback) {
+    console.log("getProprose");
+    callback(null,"getProprose");
+  }
+  //for locklove
+  getMemory(fromBlockNumber, toBlockNumber, callback) {
+    console.log("getMemory");
+    callback(null,"getMemory");
+  }
+  //
+  getBlockTimestamp (ret, callback) {
+    start1 = Date.now();
+    const blockNumbers = _.map(ret.logs, 'blockNumber');
+    const blockTimestamps = {};
+
+    async.each(blockNumbers, (blockNumber, _next) => {
+      web3.eth.getBlock(blockNumber, (_err, block) => {
+        if (_err) {
+          return _next(_err);
+        }
+        blockTimestamps[blockNumber] = block.timestamp;
+        _next(null, null);
+      });
+    }, (_err) => {
+      if (_err) {
+        return next(_err);
+      }
+      millis1 = Date.now() - start1;
+      console.log("  Time blockTimestamps: ",millis1/1000);
+      return callback(null, blockTimestamps);
+    });
+  }
+  //
+  _processProposeData (proposes, blockTimestamps, callback) {
+    console.log("_processProposeData: ",proposes);
+    const records = {};
+    _.each(proposes, (item) => {
+      const txid = item.transactionHash;
+      if (!records[txid]) {
+        records[txid] = {};
+      }
+      const timestamp = blockTimestamps[item.blockNumber];
+      if (!timestamp) {
+        return next(`Cannot get block info for log id=${item.id}, tx=${item.transactionHash}`);
+      }
+      const record = records[txid];
+      record.fAddress     = item.fAddress;
+      record.fPropose     = item.fPropose;
+      record.fImg         = item.fImg;
+      record.tAddress     = item.tAddress;
+      // record.tPropose     = item.tPropose;
+      record.tImg         = item.tImg;
+      let place = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
+      record.place        = place;
+      record.createtime   = timestamp;
+      record.replytime    = timestamp;
+    });
+    callback(null,records);
+  }
+  //
+  _processMemoryData (memories, blockTimestamps, callback) {
+    console.log("_processMemoryData: ",memories);
+    const records = {};
+    _.each(proposes, (item) => {
+      const txid = item.transactionHash;
+      if (!records[txid]) {
+        records[txid] = {};
+      }
+      const timestamp = blockTimestamps[item.blockNumber];
+      if (!timestamp) {
+        return next(`Cannot get block info for log id=${item.id}, tx=${item.transactionHash}`);
+      }
+      const record = records[txid];
+      record.proposeID    = item.proposeID;
+      record.fAddress     = item.fAddress;
+      record.comment      = item.comment;
+      record.tImg         = item.tImg;
+      let place = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
+      record.place        = place;
+      record.createtime   = timestamp;
+    });
+    callback(null,records);
   }
   //
   _processLogData (logs, blockTimestamps, callback) {
@@ -213,6 +279,8 @@ class SyncChainToRedis {
       record.blockHash = log.blockHash;
       record.blockTimestamp = timestamp;
       record.tx = log.transactionHash;
+      let place = "{"+"name:"+"HN"+", "+ "longitude:"+"item.long"+", "+"latitude:"+"item.lat"+"}";
+      record.place        = place;
     });
     console.log("_processLogData done");
     callback(null,records);

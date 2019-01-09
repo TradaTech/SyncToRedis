@@ -4,9 +4,9 @@ module.exports = {
     "ethScan": "https://etherscan.io/"
   },
   "contractAddresses": {
-    "lovememory": "",
-    "lovepropose": ""
+    "memory": "",
+    "propose": "",
   },
   "averageBlockTime": 15000,
-  "startBlockNumber": 5060595
+  "startBlockNumber": 6000000
 };
