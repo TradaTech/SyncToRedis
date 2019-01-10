@@ -19,7 +19,7 @@ const memoryContract              = new web3.eth.Contract(memoryABI, network.con
 
 let LATEST_PROCESSED_BLOCK  = 0;
 // const env                   = process.env;
-const BATCH_BLOCK_SIZE      = parseInt(process.env.BATCH_BLOCK_SIZE || 500);
+const BATCH_BLOCK_SIZE      = parseInt(process.env.BATCH_BLOCK_SIZE || 300);
 const REQUIRED_CONFIRMATION = parseInt(process.env.REQUIRED_CONFIRMATION || 7);
 const PARALLEL_INSERT_LIMIT = 1000;
 const DB_PROPOSE_INDEX      = parseInt(process.env.DB_PROPOSE_INDEX || 0);
@@ -130,14 +130,17 @@ class SyncChainToRedis {
       logs: (next) => {
         this.getTransfer(fromBlockNumber, toBlockNumber, next);
       },
-      // proprose: (next) => {
-      //   this.getProprose(fromBlockNumber, toBlockNumber, next);
-      // },
-      // memory: (next) => {
-      //   this.getMemory(fromBlockNumber, toBlockNumber, next);
-      // },
-      blockTimestamps: ['logs', (ret, next) => {
-        this.getBlockTimestamp(ret,next);
+      proprose: (next) => {
+        this.getProprose(fromBlockNumber, toBlockNumber, next);
+      },
+      replyProprose: (next) => {
+        this.getReplyProprose(fromBlockNumber, toBlockNumber, next);
+      },
+      memory: (next) => {
+        this.getMemory(fromBlockNumber, toBlockNumber, next);
+      },
+      blockTimestamps: ['logs','proprose','replyProprose','memory', (ret, next) => {
+        this.getBlockTimestamp(ret, next);
       }],
       processLogs: ['blockTimestamps', (ret, next) => {
         this._processLogData(ret.logs, ret.blockTimestamps, next);
@@ -145,6 +148,9 @@ class SyncChainToRedis {
       // processProprose: ['blockTimestamps', 'proprose', (ret, next) => {
       //   this._processProposeData(ret.proprose, ret.blockTimestamps, next);
       // }],
+      // processReplyProprose: ['blockTimestamps', 'proprose', (ret, next) => {
+      //   this._processReplyProposeData(ret.proprose, ret.blockTimestamps, next);
+      // }],      
       // processMemory: ['blockTimestamps', 'memory', (ret, next) => {
       //   this._processMemoryData(ret.memory, ret.blockTimestamps, next);
       // }],
@@ -152,7 +158,8 @@ class SyncChainToRedis {
       //   this._saveToRds(ret.processData, next);
       // }],
       savedata:[ 'processLogs', (ret, next) =>{
-        this._saveToRds(ret.processLogs, next);
+        this._saveToRds(ret.processLogs, ret.processLogs, ret.processLogs, next);
+        // this._saveToRds2(ret.processLogs, next);
       }]
     }, callback);
   }
@@ -177,10 +184,42 @@ class SyncChainToRedis {
         //console.log(events) // same results as the optional callback above
     });
   }
+  //for test bnb
+  // getTransferbk(fromBlockNumber, toBlockNumber, callback) {
+  //   start0 = Date.now();
+  //   const options = {
+  //     fromBlock: fromBlockNumber-1, 
+  //     toBlock: toBlockNumber,
+  //     address: ['0x56719fDa968D45042E6761DE23c4139127315EBE']
+  //   }
+  //   var subscription = web3.eth.subscribe('logs', options, function(error, result){
+  //     if (!error){
+  //       console.log("subscription:=",result);
+  //       web3.eth.clearSubscriptions();
+  //     }else{
+  //       console.log(error);
+  //     }
+  //   });
+  //   subscription.on('data', function(log){
+  //     console.log("data:=",log);
+  //     web3.eth.clearSubscriptions();
+  //   });
+
+  //   // unsubscribes the subscription
+  //   subscription.unsubscribe(function(error, success){
+  //     if(success)
+  //         console.log('Successfully unsubscribed!');
+  //   });
+  // }
   //for locklove
   getProprose(fromBlockNumber, toBlockNumber, callback) {
     console.log("getProprose");
     callback(null,"getProprose");
+  }
+  //for locklove
+  getReplyProprose(fromBlockNumber, toBlockNumber, callback) {
+    console.log("getReplyProprose");
+    callback(null,"getReplyProprose");
   }
   //for locklove
   getMemory(fromBlockNumber, toBlockNumber, callback) {
@@ -190,8 +229,15 @@ class SyncChainToRedis {
   //
   getBlockTimestamp (ret, callback) {
     start1 = Date.now();
-    const blockNumbers = _.map(ret.logs, 'blockNumber');
     const blockTimestamps = {};
+    const blockNumbersLog           = _.uniqBy(_.map(ret.logs, 'blockNumber'));
+    const blockNumbersProprose      = _.uniqBy(_.map(ret.proprose, 'blockNumber'));
+    const blockNumbersReplyProprose = _.uniqBy(_.map(ret.replyProprose, 'blockNumber'));
+    const blockNumbersMemory        = _.uniqBy(_.map(ret.memory, 'blockNumber'));
+    // console.log(blockNumbersProprose,'-',blockNumbersReplyProprose,'-',blockNumbersMemory);
+
+    // /* Remove item uniqueness & undefined */
+    const blockNumbers              = _.without(_.unionBy(blockNumbersLog,blockNumbersProprose,blockNumbersReplyProprose,blockNumbersMemory),undefined);
 
     async.each(blockNumbers, (blockNumber, _next) => {
       web3.eth.getBlock(blockNumber, (_err, block) => {
@@ -203,13 +249,14 @@ class SyncChainToRedis {
       });
     }, (_err) => {
       if (_err) {
-        return next(_err);
+        return callback(_err);
       }
       millis1 = Date.now() - start1;
       console.log("  Time blockTimestamps: ",millis1/1000);
       return callback(null, blockTimestamps);
     });
   }
+
   //
   _processProposeData (proposes, blockTimestamps, callback) {
     console.log("_processProposeData: ",proposes);
@@ -224,19 +271,43 @@ class SyncChainToRedis {
         return next(`Cannot get block info for log id=${item.id}, tx=${item.transactionHash}`);
       }
       const record = records[txid];
+      record.index        = item.index;
       record.fAddress     = item.fAddress;
       record.fPropose     = item.fPropose;
       record.fImg         = item.fImg;
       record.tAddress     = item.tAddress;
       // record.tPropose     = item.tPropose;
-      record.tImg         = item.tImg;
-      let place = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
+      // record.tImg         = item.tImg;
+      let place           = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
       record.place        = place;
       record.createtime   = timestamp;
       record.replytime    = timestamp;
     });
     callback(null,records);
   }
+
+  //
+  _processReplyProposeData (proposes, blockTimestamps, callback) {
+    console.log("_processReplyProposeData: ",proposes);
+    const records = {};
+    _.each(proposes, (item) => {
+      const txid = item.transactionHash;
+      if (!records[txid]) {
+        records[txid] = {};
+      }
+      const timestamp = blockTimestamps[item.blockNumber];
+      if (!timestamp) {
+        return next(`Cannot get block info for log id=${item.id}, tx=${item.transactionHash}`);
+      }
+      const record        = records[txid];
+      record.index        = item.index;
+      record.tPropose     = item.tPropose;
+      record.tImg         = item.tImg;
+      record.replytime    = timestamp;
+    });
+    callback(null,records);
+  }
+
   //
   _processMemoryData (memories, blockTimestamps, callback) {
     console.log("_processMemoryData: ",memories);
@@ -250,17 +321,19 @@ class SyncChainToRedis {
       if (!timestamp) {
         return next(`Cannot get block info for log id=${item.id}, tx=${item.transactionHash}`);
       }
-      const record = records[txid];
+      const record        = records[txid];
+      record.index        = item.index;
       record.proposeID    = item.proposeID;
       record.fAddress     = item.fAddress;
       record.comment      = item.comment;
       record.tImg         = item.tImg;
-      let place = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
+      let place           = "{"+"name:"+item.place+", "+ "longitude:"+item.long+", "+"latitude:"+item.lat+"}";
       record.place        = place;
       record.createtime   = timestamp;
     });
     callback(null,records);
   }
+
   //
   _processLogData (logs, blockTimestamps, callback) {
     start2 = Date.now();
@@ -287,83 +360,49 @@ class SyncChainToRedis {
   }
 
   //Test
-  _saveToRds (records, callback) {
-    client.select(DB_MEMORY_INDEX, function() { console.log("Select DB 1"); });
+  _saveToRds(users, memoris, proposes, callback) {
     async.waterfall([
       (next) => {
-        let count =0;
-        async.eachLimit(_.values(records), PARALLEL_INSERT_LIMIT, (record, _next) => {
-          // this._sync_reply_propose(count,record, _next);
-          importMulti.hmset(record.blockNumber,record);
+        async.eachLimit(_.values(users), PARALLEL_INSERT_LIMIT, (user, _next) => {
+          importMulti.hmset(rk("U",user.blockNumber),user);
+          _next(null,null);
+        }, next);
+      },
+      (next) => {
+        async.eachLimit(_.values(memoris), PARALLEL_INSERT_LIMIT, (memory, _next) => {
+          importMulti.hmset(rk("M",memory.blockNumber),memory);
+          _next(null,null);
+        }, next);
+      },
+      (next) => {
+        async.eachLimit(_.values(proposes), PARALLEL_INSERT_LIMIT, (propose, _next) => {
+          importMulti.hmset(rk("P",propose.blockNumber),propose);
           _next(null,null);
         }, next);
       },
       (next) => {
         importMulti.exec(function(err,results){
-          if (err) {
-            next(err);
-          } else {
-            //console.log(results);
-            //client.quit();
+          if (err) { next(err); } else {
+            //console.log(results); 
             next(null,null);
            }
         });
       }
     ], (err, ret) => {
-      // exSession.destroy();
       if (err) {
         return callback(err);
       }
       millis2 = Date.now() - start2;
       console.log("  Time processLogData: ",millis2/1000);
-
       millis = Date.now() - start;
       console.log("Total Time: ",millis/1000, " - Per log/s:",countLogs / Math.floor(millis/1000));
       console.log("---------------------------------End---------------------------------");
       return callback(null, true);
     });
   }
-
-  //
-  sync_new_propose(value) {
-    client.select(DB_PROPOSE_INDEX, function() { console.log("Select DB 0"); });
-    let place = "{"+"name:"+value.place+", "+ "longitude:"+value.long+", "+"latitude:"+value.lat+"}";
-    client.hset(value.index, "place", place, redis.print);
-    client.hset(value.index, "tAddress", value.tAddress, redis.print);
-    client.hset(value.index, "fImg", value.fImg, redis.print);
-    client.hset(value.index, "fPropose", value.fPropose, redis.print);
-    client.hset(value.index, "fAddress", value.fAddress, redis.print);
-    let timestamp =  new Date().getTime();
-    client.hset(value.index, "updatetime", timestamp, redis.print);
-    client.hset(value.index, "createtime", timestamp, redis.print);
-    console.log("sync_data");
-  }
-
-  //
-  sync_reply_propose(value) {
-    client.select(DB_PROPOSE_INDEX, function() { console.log("Select DB 0"); });
-    client.hset(value.index, "tImg", value.tImg, redis.print);
-    client.hset(value.index, "tPropose", value.tPropose, redis.print);
-    let timestamp =  new Date().getTime();
-    client.hset(value.index, "updatetime", timestamp, redis.print);
-    console.log("sync_data");
-  }
-  //
-  sync_new_memory(value) {
-    client.select(DB_MEMORY_INDEX, function() { console.log("Select DB 1"); });
-    client.hset(value.index, "proposeID", value.proposeID, redis.print);
-    client.hset(value.index, "fAddress", value.fAddress, redis.print);
-    client.hset(value.index, "comment", value.comment, redis.print);
-    let place = "{"+"name:"+value.place+", "+ "longitude:"+value.long+", "+"latitude:"+value.lat+"}";
-    client.hset(value.index, "place", place, redis.print);
-    let timestamp =  new Date().getTime();
-    client.hset(value.index, "createtime", timestamp, redis.print);
-    console.log("sync_data");
-  }
 }
 
-// function rk(...args) {
-//   return Array.prototype.slice.call(args).join(':');
-// }
-
+function rk(...args) {
+  return Array.prototype.slice.call(args).join(':');
+}
 module.exports = SyncChainToRedis;
