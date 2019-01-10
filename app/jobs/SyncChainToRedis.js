@@ -348,10 +348,11 @@ class SyncChainToRedis {
         return next(`Cannot get block info for log id=${log.id}, tx=${log.transactionHash}`);
       }
       const record = records[txid];
-      record.blockNumber = log.blockNumber;
-      record.blockHash = log.blockHash;
+      record.index        = log.blockNumber;
+      record.blockNumber  = log.blockNumber;
+      record.blockHash    = log.blockHash;
       record.blockTimestamp = timestamp;
-      record.tx = log.transactionHash;
+      record.tx           = log.transactionHash;
       let place = "{"+"name:"+"HN"+", "+ "longitude:"+"item.long"+", "+"latitude:"+"item.lat"+"}";
       record.place        = place;
     });
@@ -364,19 +365,26 @@ class SyncChainToRedis {
     async.waterfall([
       (next) => {
         async.eachLimit(_.values(users), PARALLEL_INSERT_LIMIT, (user, _next) => {
-          importMulti.hmset(rk("U",user.blockNumber),user);
+          // Remove property index form infor data before save.
+          // delete user.index;
+          var newObj = _.omit(user,["index"]);
+          importMulti.hmset(rk("U",user.index),newObj);
           _next(null,null);
         }, next);
       },
       (next) => {
         async.eachLimit(_.values(memoris), PARALLEL_INSERT_LIMIT, (memory, _next) => {
-          importMulti.hmset(rk("M",memory.blockNumber),memory);
+          // Remove property index form infor data before save.
+          var newObj = _.omit(memory,["index"]);
+          importMulti.hmset(rk("M",memory.index),newObj);
           _next(null,null);
         }, next);
       },
       (next) => {
         async.eachLimit(_.values(proposes), PARALLEL_INSERT_LIMIT, (propose, _next) => {
-          importMulti.hmset(rk("P",propose.blockNumber),propose);
+          // Remove property index form infor data before save.
+          var newObj = _.omit(propose,["index"]);
+          importMulti.hmset(rk("P",propose.index),newObj);
           _next(null,null);
         }, next);
       },
